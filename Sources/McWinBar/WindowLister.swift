@@ -56,12 +56,24 @@ enum WindowLister {
             return []
         }
 
+        // Only windows of real (Dock-visible) apps belong on a taskbar. System
+        // agents like AuthenticationServices keep titled layer-0 windows that
+        // are never user-facing and can't be focused.
+        var isRegularApp: [pid_t: Bool] = [:]
+        func regular(_ pid: pid_t) -> Bool {
+            if let cached = isRegularApp[pid] { return cached }
+            let v = NSRunningApplication(processIdentifier: pid)?.activationPolicy == .regular
+            isRegularApp[pid] = v
+            return v
+        }
+
         var result: [WindowInfo] = []
         for w in raw {
             // Only the normal window layer (0). Menus, the Dock, overlays, etc.
             // live on other layers.
             guard let layer = w[kCGWindowLayer as String] as? Int, layer == 0 else { continue }
             guard let pid = w[kCGWindowOwnerPID as String] as? pid_t, pid != myPid else { continue }
+            guard regular(pid) else { continue }
             guard let num = w[kCGWindowNumber as String] as? CGWindowID else { continue }
 
             let owner = (w[kCGWindowOwnerName as String] as? String) ?? ""
