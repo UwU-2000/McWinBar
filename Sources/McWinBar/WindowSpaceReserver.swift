@@ -34,6 +34,10 @@ final class WindowSpaceReserver {
             for win in AX.windows(pid: app.processIdentifier) {
                 guard AX.subrole(win) == (kAXStandardWindowSubrole as String) else { continue }
                 guard !AX.isMinimized(win) else { continue }
+                // Never touch fullscreen windows: they live in their own Space
+                // where the bar doesn't apply, and resizing them corrupts the
+                // fullscreen/tiled layout.
+                guard !AX.isFullscreen(win) else { continue }
                 guard var frame = AX.frame(win) else { continue }
 
                 // Must be on this screen (horizontal overlap) and have sane size.

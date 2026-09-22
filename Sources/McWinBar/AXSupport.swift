@@ -29,6 +29,12 @@ enum AX {
         return (v as? Bool) ?? false
     }
 
+    static func isFullscreen(_ el: AXUIElement) -> Bool {
+        var v: CFTypeRef?
+        AXUIElementCopyAttributeValue(el, "AXFullScreen" as CFString, &v)
+        return (v as? Bool) ?? false
+    }
+
     static func frame(_ el: AXUIElement) -> CGRect? {
         var pv: CFTypeRef?
         var sv: CFTypeRef?

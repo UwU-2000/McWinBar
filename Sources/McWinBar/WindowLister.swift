@@ -30,9 +30,28 @@ enum WindowLister {
         "McWinBar" // our own app
     ]
 
+    /// On-screen windows first (front-to-back z-order), then windows that are
+    /// off-screen but still real: minimized, or living on another Space (e.g.
+    /// when some app is fullscreen). Without the second pass the taskbar would
+    /// only show the current Space's windows.
     static func list() -> [WindowInfo] {
+        let onScreen = query([.optionOnScreenOnly, .excludeDesktopElements],
+                             requireTitle: false)
+        var seen = Set(onScreen.map { $0.windowNumber })
+        var result = onScreen
+        // Off-screen pass: require a non-empty title, otherwise this picks up
+        // apps' invisible buffer/helper windows that never appear on screen.
+        for w in query([.optionAll, .excludeDesktopElements], requireTitle: true)
+        where !seen.contains(w.windowNumber) {
+            seen.insert(w.windowNumber)
+            result.append(w)
+        }
+        return result
+    }
+
+    private static func query(_ options: CGWindowListOption,
+                              requireTitle: Bool) -> [WindowInfo] {
         let myPid = getpid()
-        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let raw = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             return []
         }
@@ -49,6 +68,9 @@ enum WindowLister {
             if ignoredOwners.contains(owner) { continue }
 
             let title = (w[kCGWindowName as String] as? String) ?? ""
+            if requireTitle && title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                continue
+            }
 
             var bounds = CGRect.zero
             if let b = w[kCGWindowBounds as String] as? [String: Any],

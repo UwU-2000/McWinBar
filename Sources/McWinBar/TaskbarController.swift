@@ -18,6 +18,10 @@ final class TaskbarController: NSObject {
     // Instant active-window updates (AX focus notifications).
     private var focusWatcher: FocusWatcher?
 
+    // Background lane for expensive AX work (badges, space reservation).
+    private let axQueue = DispatchQueue(label: "mcwinbar.ax", qos: .utility)
+    private var axWorkInFlight = false
+
     // Stable launch-order for running apps (first launched = leftmost).
     private var appOrder: [pid_t: Int] = [:]
     private var orderSeq = 0
@@ -171,14 +175,26 @@ final class TaskbarController: NSObject {
         clock.refresh()
         battery.refresh()
         refreshWindows()
-        refreshBadges()
-        reserver.enforce()
+
+        // Dock-badge reading and space reservation are dozens of synchronous
+        // AX IPC calls; on the main thread they block redraws for long enough
+        // to make the whole bar feel laggy. Run them on a background queue.
+        guard !axWorkInFlight else { return }
+        axWorkInFlight = true
+        axQueue.async { [weak self] in
+            guard let self = self else { return }
+            let newBadges = DockBadges.read()
+            self.reserver.enforce()
+            DispatchQueue.main.async {
+                self.axWorkInFlight = false
+                self.applyBadges(newBadges)
+            }
+        }
     }
 
-    /// Pull notification badges from the (hidden) Dock and surface them on our
-    /// buttons, flashing any app whose badge just appeared or changed.
-    private func refreshBadges() {
-        let newBadges = DockBadges.read()
+    /// Surface freshly-read Dock badges on our buttons, flashing any app whose
+    /// badge just appeared or changed. Main thread only.
+    private func applyBadges(_ newBadges: [String: String]) {
         if newBadges == badges { return }
 
         let changed = newBadges.filter { badges[$0.key] != $0.value }.map { $0.key }
