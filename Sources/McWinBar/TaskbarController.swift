@@ -15,6 +15,9 @@ final class TaskbarController: NSObject {
     private var startPopover: NSPopover?
     private var startHotKey: HotKey?
 
+    // Instant active-window updates (AX focus notifications).
+    private var focusWatcher: FocusWatcher?
+
     // Stable launch-order for running apps (first launched = leftmost).
     private var appOrder: [pid_t: Int] = [:]
     private var orderSeq = 0
@@ -396,6 +399,17 @@ final class TaskbarController: NSObject {
                      NSWorkspace.didUnhideApplicationNotification] {
             wsCenter.addObserver(self, selector: #selector(refreshWindows),
                                  name: name, object: nil)
+        }
+
+        // NSWorkspace only reports app switches; AX focus notifications also
+        // catch window switches *within* an app, so the active indicator
+        // updates instantly instead of waiting for the 1 s poll. The delayed
+        // second refresh catches the window server finishing its re-stack.
+        focusWatcher = FocusWatcher { [weak self] in
+            self?.refreshWindows()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self?.refreshWindows()
+            }
         }
     }
 }
