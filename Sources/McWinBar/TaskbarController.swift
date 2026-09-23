@@ -228,9 +228,13 @@ final class TaskbarController: NSObject {
 
     @objc private func refreshWindows() {
         let windows = WindowLister.list()
+        // Fullscreen must be evaluated on the *fresh* list, before the change
+        // check below: entering fullscreen only changes a window's bounds,
+        // which WindowInfo equality deliberately ignores — so the list often
+        // compares "unchanged" even though fullscreen state flipped.
+        updateFullscreenMode(with: windows)
         if windows == lastWindows { return }
         lastWindows = windows
-        updateFullscreenMode()
         rebuildButtons()
     }
 
@@ -240,10 +244,10 @@ final class TaskbarController: NSObject {
     /// app (native fullscreen Space, or a borderless fullscreen game) is
     /// active. CG window bounds are top-left based, which for the primary
     /// screen coincide with its Cocoa frame.
-    private func updateFullscreenMode() {
+    private func updateFullscreenMode(with windows: [WindowInfo]) {
         guard let screen = NSScreen.screens.first else { return }
         let covered: Bool
-        if let front = lastWindows.first {
+        if let front = windows.first {
             covered = front.bounds.width >= screen.frame.width - 1
                 && front.bounds.height >= screen.frame.height - 1
                 && abs(front.bounds.minX) < 1 && abs(front.bounds.minY) < 1
