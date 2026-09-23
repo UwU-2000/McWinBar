@@ -22,6 +22,13 @@ final class TaskbarController: NSObject {
     private let axQueue = DispatchQueue(label: "mcwinbar.ax", qos: .utility)
     private var axWorkInFlight = false
 
+    // Fullscreen handling: when the front window covers the screen the bar
+    // hides (Windows-style) and a light mouse poll reveals it at the bottom
+    // edge.
+    private var isFullscreenMode = false
+    private var isRevealed = false
+    private var edgePollTimer: Timer?
+
     // Stable launch-order for running apps (first launched = leftmost).
     private var appOrder: [pid_t: Int] = [:]
     private var orderSeq = 0
@@ -74,7 +81,11 @@ final class TaskbarController: NSObject {
         panel.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.92)
         panel.isOpaque = false
         panel.hasShadow = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        // .fullScreenAuxiliary lets the panel appear over fullscreen Spaces;
+        // without it macOS suppresses the bar entirely while an app is
+        // fullscreen (it is only shown there on edge-reveal, see below).
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle,
+                                    .fullScreenAuxiliary]
 
         let content = panel.contentView!
 
@@ -219,7 +230,86 @@ final class TaskbarController: NSObject {
         let windows = WindowLister.list()
         if windows == lastWindows { return }
         lastWindows = windows
+        updateFullscreenMode()
         rebuildButtons()
+    }
+
+    // MARK: - Fullscreen accommodation
+
+    /// The front on-screen window covering the whole screen means a fullscreen
+    /// app (native fullscreen Space, or a borderless fullscreen game) is
+    /// active. CG window bounds are top-left based, which for the primary
+    /// screen coincide with its Cocoa frame.
+    private func updateFullscreenMode() {
+        guard let screen = NSScreen.screens.first else { return }
+        let covered: Bool
+        if let front = lastWindows.first {
+            covered = front.bounds.width >= screen.frame.width - 1
+                && front.bounds.height >= screen.frame.height - 1
+                && abs(front.bounds.minX) < 1 && abs(front.bounds.minY) < 1
+        } else {
+            covered = false
+        }
+        setFullscreenMode(covered)
+    }
+
+    private func setFullscreenMode(_ on: Bool) {
+        guard on != isFullscreenMode else { return }
+        isFullscreenMode = on
+        isRevealed = false
+        if on {
+            panel.orderOut(nil)
+            edgePollTimer = Timer.scheduledTimer(withTimeInterval: 0.1,
+                                                 repeats: true) { [weak self] _ in
+                self?.pollBottomEdge()
+            }
+        } else {
+            edgePollTimer?.invalidate()
+            edgePollTimer = nil
+            snapPanelToBottom()
+            panel.orderFrontRegardless()
+        }
+    }
+
+    /// While a fullscreen app is front: slide the bar in when the pointer hits
+    /// the bottom edge, slide it away once the pointer moves back up.
+    private func pollBottomEdge() {
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+        let f = screen.frame
+        let mouse = NSEvent.mouseLocation
+
+        if !isRevealed {
+            guard mouse.y <= f.minY + 2, mouse.x >= f.minX, mouse.x <= f.maxX else { return }
+            isRevealed = true
+            var rect = panel.frame
+            rect.origin.y = f.minY - barHeight     // start just off-screen
+            panel.setFrame(rect, display: false)
+            panel.orderFrontRegardless()
+            rect.origin.y = f.minY
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.15
+                panel.animator().setFrame(rect, display: true)
+            }
+        } else if mouse.y > f.minY + barHeight + 10 {
+            isRevealed = false
+            var rect = panel.frame
+            rect.origin.y = f.minY - barHeight
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = 0.15
+                panel.animator().setFrame(rect, display: true)
+            }, completionHandler: { [weak self] in
+                guard let self = self, self.isFullscreenMode, !self.isRevealed else { return }
+                self.panel.orderOut(nil)
+                self.snapPanelToBottom()
+            })
+        }
+    }
+
+    private func snapPanelToBottom() {
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+        var rect = panel.frame
+        rect.origin.y = screen.frame.minY
+        panel.setFrame(rect, display: true)
     }
 
     /// Rebuilds the taskbar: pinned apps first (in pin order), then running
@@ -340,6 +430,13 @@ final class TaskbarController: NSObject {
             startPopover = nil
             return
         }
+        // If the bar is hidden behind a fullscreen app (e.g. opened via the
+        // Ctrl+Esc hotkey), bring it up first so the popover has an anchor.
+        if !panel.isVisible {
+            isRevealed = true
+            snapPanelToBottom()
+            panel.orderFrontRegardless()
+        }
         let vc = StartMenuController { [weak self] url in
             NSWorkspace.shared.open(url)
             self?.startPopover?.close()
@@ -416,6 +513,11 @@ final class TaskbarController: NSObject {
             wsCenter.addObserver(self, selector: #selector(refreshWindows),
                                  name: name, object: nil)
         }
+        // Space switches (incl. entering/leaving fullscreen) don't necessarily
+        // activate an app, so listen for them explicitly.
+        wsCenter.addObserver(self, selector: #selector(refreshWindows),
+                             name: NSWorkspace.activeSpaceDidChangeNotification,
+                             object: nil)
 
         // NSWorkspace only reports app switches; AX focus notifications also
         // catch window switches *within* an app, so the active indicator
