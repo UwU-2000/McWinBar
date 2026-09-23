@@ -35,6 +35,15 @@ enum AX {
         return (v as? Bool) ?? false
     }
 
+    static func focusedWindow(pid: pid_t) -> AXUIElement? {
+        let app = AXUIElementCreateApplication(pid)
+        var v: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString,
+                                            &v) == .success,
+              let vv = v, CFGetTypeID(vv) == AXUIElementGetTypeID() else { return nil }
+        return (vv as! AXUIElement)
+    }
+
     static func frame(_ el: AXUIElement) -> CGRect? {
         var pv: CFTypeRef?
         var sv: CFTypeRef?

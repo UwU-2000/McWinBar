@@ -246,13 +246,28 @@ final class TaskbarController: NSObject {
     /// screen coincide with its Cocoa frame.
     private func updateFullscreenMode(with windows: [WindowInfo]) {
         guard let screen = NSScreen.screens.first else { return }
-        let covered: Bool
+        let f = screen.frame
+        var covered = false
+
+        // Geometric check (catches borderless fullscreen games too). On
+        // notched Macs a fullscreen window starts below the menu-bar strip,
+        // so allow a generous top inset instead of requiring y == 0.
         if let front = windows.first {
-            covered = front.bounds.width >= screen.frame.width - 1
-                && front.bounds.height >= screen.frame.height - 1
-                && abs(front.bounds.minX) < 1 && abs(front.bounds.minY) < 1
-        } else {
-            covered = false
+            covered = front.bounds.width >= f.width - 1
+                && abs(front.bounds.minX) < 1
+                && front.bounds.maxY >= f.height - 1
+                && front.bounds.minY <= 48
+        }
+
+        // Authoritative check: native fullscreen sets AXFullScreen on the
+        // focused window (geometry-independent, e.g. Chrome).
+        if !covered, let app = NSWorkspace.shared.frontmostApplication,
+           let win = AX.focusedWindow(pid: app.processIdentifier) {
+            covered = AX.isFullscreen(win)
+        }
+
+        if covered != isFullscreenMode {
+            Diag.log("fullscreen=\(covered) front=\(windows.first.map { "\($0.ownerName) \($0.bounds)" } ?? "none") screen=\(f)")
         }
         setFullscreenMode(covered)
     }
