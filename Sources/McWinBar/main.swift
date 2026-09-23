@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: TaskbarController?
@@ -10,7 +11,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         WindowActivator.ensureAccessibility(prompt: true)
         // Hide the system Dock while our taskbar is the one in charge.
         DockHider.hide()
+        registerAsLoginItem()
         controller = TaskbarController()
+    }
+
+    /// Auto-start on login. Registers once; if the user later disables the
+    /// entry in System Settings > General > Login Items, we respect that and
+    /// don't re-register (status will be .notFound, not .notRegistered).
+    private func registerAsLoginItem() {
+        let service = SMAppService.mainApp
+        guard service.status == .notRegistered else { return }
+        do {
+            try service.register()
+        } catch {
+            NSLog("Login item registration failed: \(error.localizedDescription)")
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
