@@ -15,16 +15,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller = TaskbarController()
     }
 
-    /// Auto-start on login. Registers once; if the user later disables the
-    /// entry in System Settings > General > Login Items, we respect that and
-    /// don't re-register (status will be .notFound, not .notRegistered).
+    /// Auto-start on login. Re-registers on every launch unless already
+    /// enabled: replacing the app bundle on rebuilds can make the background
+    /// task manager silently drop the record (status becomes .notFound), so a
+    /// register-once guard would never heal it.
     private func registerAsLoginItem() {
         let service = SMAppService.mainApp
-        guard service.status == .notRegistered else { return }
-        do {
-            try service.register()
-        } catch {
-            NSLog("Login item registration failed: \(error.localizedDescription)")
+        let status = service.status
+        Diag.log("login item status at launch: \(status.rawValue)")
+        switch status {
+        case .enabled:
+            return
+        case .requiresApproval:
+            Diag.log("login item awaiting approval in System Settings > Login Items")
+            return
+        default: // .notRegistered, .notFound
+            do {
+                try service.register()
+                Diag.log("login item registered, status now \(service.status.rawValue)")
+            } catch {
+                Diag.log("login item registration failed: \(error)")
+            }
         }
     }
 
