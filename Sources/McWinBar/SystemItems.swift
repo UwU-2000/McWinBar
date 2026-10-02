@@ -76,26 +76,40 @@ final class BatteryView: NSView {
         // Charge fill
         let inner = body.insetBy(dx: 2, dy: 2)
         let fillW = inner.width * CGFloat(status.percent) / 100.0
+        let isLow = !status.charging && status.percent <= 20
         if fillW > 0 {
             let fillRect = NSRect(x: inner.minX, y: inner.minY,
                                   width: fillW, height: inner.height)
-            let color: NSColor = status.charging
-                ? .systemGreen
-                : (status.percent <= 20 ? .systemRed : .systemGreen)
+            let color: NSColor = isLow ? .systemRed : .systemGreen
             color.setFill()
             NSBezierPath(roundedRect: fillRect, xRadius: 2, yRadius: 2).fill()
         }
 
-        // Percentage number inside the body
+        // Percentage number, drawn in two clipped passes so it contrasts with
+        // whatever is behind each part: dark text on the bright green fill
+        // (white on the darker red), adaptive label color on the empty track.
         let text = "\(status.percent)" as NSString
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .bold),
-            .foregroundColor: NSColor.labelColor
-        ]
-        let size = text.size(withAttributes: attrs)
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .bold)
+        let size = text.size(withAttributes: [.font: font])
         let point = NSPoint(x: body.midX - size.width / 2,
                             y: body.midY - size.height / 2)
-        text.draw(at: point, withAttributes: attrs)
+        let splitX = inner.minX + fillW
+        let overFill: NSColor = isLow ? .white : .black
+
+        NSGraphicsContext.current?.saveGraphicsState()
+        NSBezierPath(rect: NSRect(x: body.minX, y: body.minY,
+                                  width: splitX - body.minX,
+                                  height: body.height)).addClip()
+        text.draw(at: point, withAttributes: [.font: font, .foregroundColor: overFill])
+        NSGraphicsContext.current?.restoreGraphicsState()
+
+        NSGraphicsContext.current?.saveGraphicsState()
+        NSBezierPath(rect: NSRect(x: splitX, y: body.minY,
+                                  width: body.maxX - splitX,
+                                  height: body.height)).addClip()
+        text.draw(at: point, withAttributes: [.font: font,
+                                              .foregroundColor: NSColor.labelColor])
+        NSGraphicsContext.current?.restoreGraphicsState()
 
         // Small charging bolt on the left edge
         if status.charging,
